@@ -407,6 +407,14 @@ func (e *Engine) getConnectConfig(ctx context.Context, sessionCtx *common.Sessio
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
+	case types.DatabaseTypeAzure:
+		config.Password, err = e.Auth.GetAzureAccessToken(ctx, sessionCtx)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		// Azure requires database login to be <user>@<server-name> e.g.
+		// alice@postgres-server-name.
+		config.User = fmt.Sprintf("%v@%v", config.User, sessionCtx.Database.GetAzure().Name)
 	}
 	// TLS config will use client certificate for an onprem database or
 	// will contain RDS root certificate for RDS/Aurora.
