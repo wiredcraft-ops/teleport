@@ -132,7 +132,7 @@ func (process *TeleportProcess) initKubernetesService(log *logrus.Entry, conn *C
 		// create an adapter, from reversetunnel.ServerHandler to net.Listener.
 		shtl := reversetunnel.NewServerHandlerToListener(reversetunnel.LocalKubernetes)
 		listener = shtl
-		agentPool, err = reversetunnel.NewAgentPool(
+		agentPool, err := process.newAgentPool(
 			process.ExitContext(),
 			reversetunnel.AgentPoolConfig{
 				Component:   teleport.ComponentKube,

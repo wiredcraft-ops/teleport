@@ -18,7 +18,6 @@ package reversetunnel
 
 import (
 	"context"
-
 	"fmt"
 	"net"
 	"time"
@@ -58,6 +57,10 @@ type DialParams struct {
 	// ConnType is the type of connection requested, either node or application.
 	// Only used when connecting through a tunnel.
 	ConnType types.TunnelType
+
+	// IgnoreProxyRecording tells the proxy not to record the session even if
+	// proxy session recording is enabled. This is used for proxy to proxy tunneling.
+	IgnoreProxyRecording bool
 }
 
 func (params DialParams) String() string {

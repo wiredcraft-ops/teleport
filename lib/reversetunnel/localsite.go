@@ -30,8 +30,10 @@ import (
 	"github.com/gravitational/teleport/api/utils/sshutils"
 	"github.com/gravitational/teleport/lib/auth"
 	"github.com/gravitational/teleport/lib/defaults"
+	"github.com/gravitational/teleport/lib/nodetracker"
 	"github.com/gravitational/teleport/lib/services"
 	"github.com/gravitational/teleport/lib/srv/forward"
+	"github.com/gravitational/teleport/lib/tunnel"
 	"github.com/gravitational/teleport/lib/utils"
 	"github.com/gravitational/teleport/lib/utils/proxy"
 	"github.com/prometheus/client_golang/prometheus"
@@ -41,7 +43,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func newlocalSite(srv *server, domainName string, client auth.ClientI) (*localSite, error) {
+func newLocalSite(srv *server, domainName string, client auth.ClientI) (*localSite, error) {
 	err := utils.RegisterPrometheusCollectors(localClusterCollectors...)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -185,7 +187,7 @@ func (s *localSite) Dial(params DialParams) (net.Conn, error) {
 
 	// If the proxy is in recording mode and a SSH connection is being requested,
 	// use the agent to dial and build an in-memory forwarding server.
-	if params.ConnType == types.NodeTunnel && services.IsRecordAtProxy(recConfig.GetMode()) {
+	if params.ConnType == types.NodeTunnel && services.IsRecordAtProxy(recConfig.GetMode()) && !params.IgnoreProxyRecording {
 		return s.dialWithAgent(params)
 	}
 
@@ -272,6 +274,31 @@ func (s *localSite) dialWithAgent(params DialParams) (net.Conn, error) {
 	return conn, nil
 }
 
+// dialPeer attempts to dial a node through a peer proxy.
+func (s *localSite) dialPeer(dreq DialParams) (net.Conn, error) {
+	proxies, err := nodetracker.GetClient().GetProxies(s.srv.Context, dreq.ServerID)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	if len(proxies) == 0 {
+		return nil, trace.NotFound("no peer proxies found: %s", dreq.String())
+	}
+
+	var errors []error
+	for _, proxy := range proxies {
+		s.log.Debugf("Dialing through peer proxy %s from: %v to: %v.", proxy.Addr, dreq.From, dreq.To)
+		conn, err := tunnel.GetClient().DialContext(s.srv.Context, proxy.Addr, dreq.To, dreq.ServerID, string(dreq.ConnType))
+		if err != nil {
+			errors = append(errors, err)
+			continue
+		}
+		return conn, nil
+	}
+
+	return nil, trace.NewAggregate(errors...)
+}
+
 // dialTunnel connects to the target host through a tunnel.
 func (s *localSite) dialTunnel(dreq *sshutils.DialReq) (net.Conn, error) {
 	rconn, err := s.getRemoteConn(dreq)
@@ -306,6 +333,17 @@ func (s *localSite) getConn(params DialParams) (conn net.Conn, useTunnel bool, e
 	}
 
 	if !trace.IsNotFound(tunnelErr) {
+		return nil, false, trace.Wrap(tunnelErr)
+	}
+
+	// If server ID matches a node that has self registered itself over the tunnel,
+	// return a tunnel connection to that node. Otherwise net.Dial to the target host.
+	conn, tunnelErr = s.dialPeer(params)
+	if tunnelErr == nil {
+		return conn, true, nil
+	}
+
+	if !trace.IsNotFound(tunnelErr) && !trace.IsNotImplemented(tunnelErr) {
 		return nil, false, trace.Wrap(tunnelErr)
 	}
 
@@ -437,9 +475,39 @@ func (s *localSite) handleHeartbeat(rconn *remoteConn, ch ssh.Channel, reqC <-ch
 			}
 			tm := time.Now().UTC()
 			rconn.setLastHeartbeat(tm)
+
+			host, _, err := net.SplitHostPort(rconn.conn.LocalAddr().String())
+			if err != nil {
+				s.log.WithError(err).WithFields(log.Fields{"nodeID": rconn.nodeID}).Debugf("Error splitting host and port of %+v", rconn.conn.LocalAddr().String())
+				break
+			}
+			_, _, err = net.SplitHostPort(tunnel.GetServer().Addr().String())
+			if err != nil {
+				s.log.WithError(err).WithFields(log.Fields{"nodeID": rconn.nodeID}).Debugf("Error splitting host and port of %+v", rconn.conn.LocalAddr().String())
+				break
+			}
+
+			addr := fmt.Sprintf("%s:%s", host, "3080")
+
+			err = nodetracker.GetClient().AddNode(
+				s.srv.Context,
+				rconn.nodeID,
+				rconn.proxyName,
+				rconn.clusterName,
+				addr,
+			)
+			if err != nil && !trace.IsNotImplemented(err) {
+				s.log.WithError(err).WithFields(log.Fields{"nodeID": rconn.nodeID}).Debug("Error adding node to node tracker")
+			}
+
 		// Note that time.After is re-created everytime a request is processed.
 		case <-time.After(s.offlineThreshold):
 			rconn.markInvalid(trace.ConnectionProblem(nil, "no heartbeats for %v", s.offlineThreshold))
+
+			err := nodetracker.GetClient().RemoveNode(s.srv.Context, rconn.nodeID)
+			if err != nil && !trace.IsNotImplemented(err) {
+				s.log.WithError(err).WithFields(log.Fields{"nodeID": rconn.nodeID}).Debug("Error removing node from node tracker")
+			}
 		}
 	}
 }

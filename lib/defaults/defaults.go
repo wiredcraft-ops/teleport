@@ -73,6 +73,9 @@ const (
 	// NodeTrackerListenPort is the default listen port for the node tracker service.
 	NodeTrackerListenPort = 3029
 
+	// Proxy2ProxyListenPort is the default listen port for proxy to proxy communication.
+	Proxy2ProxyListenPort = 3030
+
 	// RDPListenPort is the standard port for RDP servers.
 	RDPListenPort = 3389
 
@@ -625,6 +628,11 @@ func MetricsServiceListenAddr() *utils.NetAddr {
 // NodeTrackerServiceListenAddr returns the default listening address for the node tracker service
 func NodeTrackerServiceListenAddr() *utils.NetAddr {
 	return makeAddr(BindIP, NodeTrackerListenPort)
+}
+
+// Proxy2ProxyListenAddr returns the default listening address for proxy to proxy communication.
+func Proxy2ProxyListenAddr() *utils.NetAddr {
+	return makeAddr(BindIP, Proxy2ProxyListenPort)
 }
 
 func makeAddr(host string, port int16) *utils.NetAddr {

@@ -64,6 +64,10 @@ type AgentPoolConfig struct {
 	// Client is client to the auth server this agent connects to receive
 	// a list of pools
 	Client auth.ClientI
+	// MaxAgentCount is the number of agents that should be connected at once.
+	// In other words the max number of proxies to connect to.
+	// If the value is 0 then the the pool will attempt to connect to all proxies.
+	MaxAgentCount int
 	// AccessPoint is a lightweight access point
 	// that can optionally cache some values
 	AccessPoint auth.AccessPoint
@@ -194,12 +198,14 @@ func (m *AgentPool) processSeekEvents() {
 			m.log.Debugf("Halting seek event processing (pool closing)")
 			return
 		case lease := <-m.proxyTracker.Acquire():
-			m.log.Debugf("Seeking: %+v.", lease.Key())
-			m.withLock(func() {
-				if err := m.addAgent(lease); err != nil {
-					m.log.WithError(err).Errorf("Failed to add agent.")
-				}
-			})
+			if m.cfg.MaxAgentCount == 0 || m.Count() < m.cfg.MaxAgentCount {
+				m.log.Debugf("Seeking: %+v.", lease.Key())
+				m.withLock(func() {
+					if err := m.addAgent(lease); err != nil {
+						m.log.WithError(err).Errorf("Failed to add agent.")
+					}
+				})
+			}
 		}
 		select {
 		case <-m.ctx.Done():
@@ -337,8 +343,10 @@ func (m *AgentPool) removeDisconnected() {
 }
 
 // Make sure ServerHandlerToListener implements both interfaces.
-var _ = net.Listener(ServerHandlerToListener{})
-var _ = ServerHandler(ServerHandlerToListener{})
+var (
+	_ = net.Listener(ServerHandlerToListener{})
+	_ = ServerHandler(ServerHandlerToListener{})
+)
 
 // ServerHandlerToListener is an adapter from ServerHandler to net.Listener. It
 // can be used as a Server field in AgentPoolConfig, while also being passed to

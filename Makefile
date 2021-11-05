@@ -759,6 +759,11 @@ buildbox-grpc:
 	  --gogofast_out=plugins=grpc:lib/nodetracker/api\
       nodetracker.proto
 
+	protoc -I=.:$$PROTO_INCLUDE \
+	  --proto_path=lib/tunnel/api \
+	  --gogofast_out=plugins=grpc:lib/tunnel/api\
+      tunnel.proto
+
 .PHONY: goinstall
 goinstall:
 	go install $(BUILDFLAGS) \

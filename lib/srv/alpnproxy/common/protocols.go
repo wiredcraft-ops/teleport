@@ -48,6 +48,9 @@ const (
 
 	// ProtocolAuth allows dialing local/remote auth service based on SNI cluster name value.
 	ProtocolAuth Protocol = "teleport-auth@"
+
+	// ProtocolProxy2Proxy is the TLS ALPN protocol value used to indicate proxy to proxy protocol.
+	ProtocolProxy2Proxy Protocol = "teleport-proxy2proxy"
 )
 
 // SupportedProtocols is the list of supported ALPN protocols.
@@ -60,6 +63,7 @@ var SupportedProtocols = []Protocol{
 	ProtocolReverseTunnel,
 	ProtocolHTTP,
 	ProtocolHTTP2,
+	ProtocolProxy2Proxy,
 	ProtocolAuth,
 }
 

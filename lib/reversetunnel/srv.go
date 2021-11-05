@@ -306,7 +306,7 @@ func NewServer(cfg Config) (Server, error) {
 	}
 
 	for _, clusterInfo := range cfg.DirectClusters {
-		cluster, err := newlocalSite(srv, clusterInfo.Name, clusterInfo.Client)
+		cluster, err := newLocalSite(srv, clusterInfo.Name, clusterInfo.Client)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}

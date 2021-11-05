@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package api;
+
+service TunnelerService { rpc Tunnel(stream Frame) returns (stream Frame); }
+
+message Frame {
+    oneof Message {
+        DialRequest DialRequest = 1;
+        Data Data = 2;
+    }
+}
+
+message DialRequest {
+    string ServerID = 1;
+    string ConnType = 2;
+    Addr To = 3;
+}
+
+message Addr {
+    string Network = 1;
+    string Address = 2;
+}
+
+message Data { bytes Bytes = 1; }

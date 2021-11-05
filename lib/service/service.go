@@ -400,6 +400,11 @@ func (process *TeleportProcess) getClusterFeatures() proto.Features {
 	return process.clusterFeatures
 }
 
+func (process *TeleportProcess) proxy2proxyEnabled() bool {
+	return modules.GetModules().Features().NodeTracker &&
+		process.Config.Proxy.NodeTrackerAddr != nil
+}
+
 // GetIdentity returns the process identity (credentials to the auth server) for a given
 // teleport Role. A teleport process can have any combination of 3 roles: auth, node, proxy
 // and they have their own identities
@@ -1683,6 +1688,21 @@ func (process *TeleportProcess) newAsyncEmitter(clt apievents.Emitter) (*events.
 	})
 }
 
+// newAgentPool returns a new AgentPool instance.
+func (process *TeleportProcess) newAgentPool(ctx context.Context, config reversetunnel.AgentPoolConfig) (*reversetunnel.AgentPool, error) {
+	// Set the MaxAgentCount to 1 to disable war dialing.
+	if process.getClusterFeatures().NodeTracker {
+		config.MaxAgentCount = 1
+	}
+
+	agentPool, err := reversetunnel.NewAgentPool(ctx, config)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	return agentPool, nil
+}
+
 // initSSH initializes the "node" role, i.e. a simple SSH server connected to the auth server.
 func (process *TeleportProcess) initSSH() error {
 	process.registerWithAuthServer(types.RoleNode, SSHIdentityEvent)
@@ -1903,7 +1923,7 @@ func (process *TeleportProcess) initSSH() error {
 			}
 
 			// Create and start an agent pool.
-			agentPool, err = reversetunnel.NewAgentPool(
+			agentPool, err = process.newAgentPool(
 				process.ExitContext(),
 				reversetunnel.AgentPoolConfig{
 					Component:   teleport.ComponentNode,
@@ -2428,6 +2448,7 @@ type proxyListeners struct {
 	reverseTunnel net.Listener
 	kube          net.Listener
 	db            dbListeners
+	p2p           net.Listener
 	alpn          net.Listener
 }
 
@@ -2490,6 +2511,13 @@ func (process *TeleportProcess) setupProxyListeners() (*proxyListeners, error) {
 
 	if !cfg.Proxy.SSHAddr.IsEmpty() {
 		listeners.ssh, err = process.importOrCreateListener(listenerProxySSH, cfg.Proxy.SSHAddr.Addr)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+	}
+
+	if process.proxy2proxyEnabled() {
+		listeners.p2p, err = process.importOrCreateListener(listenerProxy2Proxy, defaults.Proxy2ProxyListenAddr().Addr)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -2767,6 +2795,8 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 			return trace.Wrap(err)
 		}
 	}
+
+	process.initProxy2Proxy(listeners.p2p, tsrv, clientTLSConfig)
 
 	// Register web proxy server
 	var webServer *http.Server
@@ -3276,6 +3306,14 @@ func setupALPNRouter(listeners *proxyListeners, serverTLSConf *tls.Config, cfg *
 	router.AddDBTLSHandler(webTLSDB.HandleConnection)
 	listeners.db.tls = webTLSDB
 
+	proxyListener := alpnproxy.NewMuxListenerWrapper(listeners.p2p, listeners.web)
+	router.Add(alpnproxy.HandlerDecs{
+		MatchFunc:  alpnproxy.MatchByProtocol(alpncommon.ProtocolProxy2Proxy),
+		Handler:    proxyListener.HandleConnection,
+		ForwardTLS: true,
+	})
+	listeners.p2p = proxyListener
+
 	return router
 }
 
@@ -3501,7 +3539,8 @@ func (process *TeleportProcess) initApps() {
 		}
 
 		// Create and start an agent pool.
-		agentPool, err = reversetunnel.NewAgentPool(process.ExitContext(),
+		agentPool, err = process.newAgentPool(
+			process.ExitContext(),
 			reversetunnel.AgentPoolConfig{
 				Component:   teleport.ComponentApp,
 				HostUUID:    conn.ServerIdentity.ID.HostUUID,
