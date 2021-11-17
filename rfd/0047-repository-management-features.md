@@ -235,6 +235,7 @@ on:
       # jobs...
             
 ```
+The backport bot will only support merged pull requests. 
 
 
 #### Backporting 
@@ -265,3 +266,9 @@ Example comment:
 ```
 Failed to backport changes to <branch>, <branch>, <branch>.
 ```
+
+#### Permissions 
+
+To support automatic backporting, `contents:write` and `issues:write` permissions will need to be granted to the Github token. Write access to `contents` is needed for merging the changes and write access to issues will allow posting comments on pull requests in the event of a failed backport.
+
+
