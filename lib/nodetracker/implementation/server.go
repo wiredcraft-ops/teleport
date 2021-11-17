@@ -39,8 +39,8 @@ type Server struct {
 
 // NewServer initializes a node tracker service grpc server
 func NewServer(listener net.Listener, offlineThreshold time.Duration) {
-	tracker := NewTracker(offlineThreshold)
-	trackerService := NewTrackerService(tracker)
+	tracker := NewTracker(&Config{OfflineThreshold: offlineThreshold})
+	trackerService := newTrackerService(tracker)
 
 	server := grpc.NewServer()
 	api.RegisterNodeTrackerServiceServer(server, trackerService)
@@ -72,9 +72,9 @@ type trackerService struct {
 	tracker api.Tracker
 }
 
-// NewTrackerService returns a tracker service handler that is responsible
+// newTrackerService returns a tracker service handler that is responsible
 // tracking node to proxy relations
-func NewTrackerService(tracker api.Tracker) *trackerService {
+func newTrackerService(tracker api.Tracker) *trackerService {
 	return &trackerService{
 		tracker: tracker,
 	}

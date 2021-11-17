@@ -22,7 +22,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gravitational/teleport/api/defaults"
 	"github.com/gravitational/teleport/lib/nodetracker/api"
+
+	"github.com/jonboulle/clockwork"
 )
 
 // tracker is a node tracker database
@@ -30,23 +33,55 @@ import (
 type tracker struct {
 	route *routeDetails
 	done  chan struct{}
+	clock clockwork.Clock
+}
+
+type Config struct {
+	// Clock is used to control proxy expiry time.
+	Clock clockwork.Clock
+
+	// OfflineThreshold is used to set proxy expiry time
+	OfflineThreshold time.Duration
+
+	// ProxyControlCallback provides a callback method for proxy cleanup
+	// The only current usage for it is in tests. check tracker_test.go
+	ProxyControlCallback func()
+}
+
+// CheckAndSetDefaults validates the values of a *Config.
+func (c *Config) CheckAndSetDefaults() {
+	if c.Clock == nil {
+		c.Clock = clockwork.NewRealClock()
+	}
+
+	if c.OfflineThreshold == 0 {
+		c.OfflineThreshold = defaults.KeepAliveInterval()
+	}
+
+	if c.ProxyControlCallback == nil {
+		c.ProxyControlCallback = func() {}
+	}
 }
 
 // NewTracker returns a tracker responsible of tracking node to proxy relationships
-func NewTracker(offlineThreshold time.Duration) api.Tracker {
+func NewTracker(config *Config) api.Tracker {
+	config.CheckAndSetDefaults()
+
 	t := &tracker{
-		route: newRouteDetails(),
+		route: newRouteDetails(config.Clock),
 		done:  make(chan struct{}),
+		clock: config.Clock,
 	}
 
+	cleanupTicker := config.Clock.NewTicker(config.OfflineThreshold)
 	go func() {
-		cleanupTicker := time.NewTicker(offlineThreshold)
 		for {
 			select {
 			case <-t.done:
 				return
-			case <-cleanupTicker.C:
-				t.route.Cleanup(offlineThreshold)
+			case <-cleanupTicker.Chan():
+				t.route.Cleanup(config.OfflineThreshold)
+				config.ProxyControlCallback()
 			}
 		}
 	}()
@@ -54,7 +89,7 @@ func NewTracker(offlineThreshold time.Duration) api.Tracker {
 	return t
 }
 
-// Stop provies an exit for goroutines spawn by the tracker
+// Stop provides an exit for goroutines spawn by the tracker
 func (t *tracker) Stop() {
 	t.done <- struct{}{}
 	close(t.done)
@@ -74,7 +109,7 @@ func (t *tracker) AddNode(
 			ID:          proxyID,
 			ClusterName: clusterName,
 			Addr:        addr,
-			UpdatedAt:   time.Now(),
+			UpdatedAt:   t.clock.Now(),
 		},
 	)
 }
@@ -93,13 +128,14 @@ func (t *tracker) GetProxies(ctx context.Context, nodeID string) []api.ProxyDeta
 // details about corresponding proxies
 type routeDetails struct {
 	sync.RWMutex
+	clock   clockwork.Clock
 	route   map[string]map[string]struct{} // key NodeID, value set of ProxyID
 	details map[string]api.ProxyDetails    // key ProxyID, value ProxyDetails
 }
 
 // newRouteDetails inits a new routeDetails struct
-func newRouteDetails() *routeDetails {
-	rd := &routeDetails{}
+func newRouteDetails(clock clockwork.Clock) *routeDetails {
+	rd := &routeDetails{clock: clock}
 	rd.route = make(map[string]map[string]struct{})
 	rd.details = make(map[string]api.ProxyDetails)
 	return rd
@@ -113,7 +149,7 @@ func (rd *routeDetails) Cleanup(offlineThreshold time.Duration) {
 	// remove expired proxies
 	removedProxies := make(map[string]struct{})
 	for proxyID, proxyDetail := range rd.details {
-		if time.Since(proxyDetail.UpdatedAt) > offlineThreshold {
+		if rd.clock.Since(proxyDetail.UpdatedAt) > offlineThreshold {
 			delete(rd.details, proxyID)
 			removedProxies[proxyID] = struct{}{}
 		}
@@ -121,7 +157,7 @@ func (rd *routeDetails) Cleanup(offlineThreshold time.Duration) {
 
 	// remove expired node to proxy relationships
 	for nodeID, proxySet := range rd.route {
-		for proxyID, _ := range proxySet {
+		for proxyID := range proxySet {
 			if _, ok := removedProxies[proxyID]; ok {
 				delete(proxySet, proxyID)
 			}
@@ -151,7 +187,7 @@ func (rd *routeDetails) GetProxies(nodeID string) []api.ProxyDetails {
 	defer rd.RUnlock()
 
 	proxyDetails := make([]api.ProxyDetails, 0)
-	for proxyID, _ := range rd.route[nodeID] {
+	for proxyID := range rd.route[nodeID] {
 		if proxyDetail, ok := rd.details[proxyID]; ok {
 			proxyDetails = append(proxyDetails, proxyDetail)
 		}
