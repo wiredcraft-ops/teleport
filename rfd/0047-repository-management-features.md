@@ -5,9 +5,9 @@
 
 Proposes the implementation of repository management features. The features include:
 
-- Auto assigning reviewers 
-- Checking pull requests for approvals from required reviewers 
-- Backporting Docs 
+- Auto-assign reviewers. 
+- Checking pull requests for approvals from required reviewers. 
+- Backporting docs. 
 
 ## Why
 
