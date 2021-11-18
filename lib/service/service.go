@@ -3581,19 +3581,24 @@ func (process *TeleportProcess) initApps() {
 		if err != nil {
 			return trace.Wrap(err)
 		}
+		connectionLimiter, err := limiter.NewConnectionsLimiter(process.Config.Apps.Limiter)
+		if err != nil {
+			return trace.Wrap(err)
+		}
 
 		appServer, err = app.New(process.ExitContext(), &app.Config{
-			DataDir:          process.Config.DataDir,
-			AuthClient:       conn.Client,
-			AccessPoint:      accessPoint,
-			Authorizer:       authorizer,
-			TLSConfig:        tlsConfig,
-			CipherSuites:     process.Config.CipherSuites,
-			HostID:           process.Config.HostUUID,
-			Hostname:         process.Config.Hostname,
-			GetRotation:      process.getRotation,
-			Apps:             applications,
-			ResourceMatchers: process.Config.Apps.ResourceMatchers,
+			DataDir:           process.Config.DataDir,
+			AuthClient:        conn.Client,
+			AccessPoint:       accessPoint,
+			Authorizer:        authorizer,
+			TLSConfig:         tlsConfig,
+			CipherSuites:      process.Config.CipherSuites,
+			HostID:            process.Config.HostUUID,
+			Hostname:          process.Config.Hostname,
+			GetRotation:       process.getRotation,
+			ConnectionLimiter: connectionLimiter,
+			Apps:              applications,
+			ResourceMatchers:  process.Config.Apps.ResourceMatchers,
 			OnHeartbeat: func(err error) {
 				if err != nil {
 					process.BroadcastEvent(Event{Name: TeleportDegradedEvent, Payload: teleport.ComponentApp})
