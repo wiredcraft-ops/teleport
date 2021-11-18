@@ -4414,6 +4414,9 @@ steps:
     volumes:
       - name: rpmrepo
         path: /rpmrepo
+      # for in-memory tmpfs for key material
+      - name: tmpfs
+        path: /tmpfs
     environment:
       GNUPGHOME: /tmpfs/gnupg
       GPG_RPM_SIGNING_ARCHIVE:
@@ -4555,6 +4558,6 @@ volumes:
       name: drone-s3-debrepo-pvc
 ---
 kind: signature
-hmac: 5cbd8dc9a971e8e25e9f23484b12d47f10992ab76e2a844d384d0ff192319bd4
+hmac: bd0a5db3bccdfd4ce0810a496167310fe968e8130c93e988e6ad7b5f5171faff
 
 ...
