@@ -3581,7 +3581,7 @@ func (process *TeleportProcess) initApps() {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		connectionLimiter, err := limiter.NewConnectionsLimiter(process.Config.Apps.Limiter)
+		connLimiter, err := limiter.NewLimiter(process.Config.Apps.Limiter)
 		if err != nil {
 			return trace.Wrap(err)
 		}
@@ -3596,7 +3596,7 @@ func (process *TeleportProcess) initApps() {
 			HostID:            process.Config.HostUUID,
 			Hostname:          process.Config.Hostname,
 			GetRotation:       process.getRotation,
-			ConnectionLimiter: connectionLimiter,
+			ConnectionLimiter: connLimiter,
 			Apps:              applications,
 			ResourceMatchers:  process.Config.Apps.ResourceMatchers,
 			OnHeartbeat: func(err error) {
