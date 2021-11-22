@@ -191,17 +191,17 @@ jobs:
 
 --- 
 
-## Backporting Docs
+## Automatic Backporting 
 
 **Status:** _In Progress_ 
 
 ###  What 
 
-Automatically backport changes to `docs/` to the specified branches. 
+Automatically backport changes to specfic branches. 
 
 ### Why 
 
-Backporting docs is time consuming and there are often many doc changes. Implementing a way to automate backporting will increase the efficiency and speed of the development team. 
+Backporting is time consuming and there are often many changes. Implementing a way to automate backporting will increase the efficiency and speed of the development team. 
 
 ### Implementation
 
@@ -240,26 +240,16 @@ The backport bot will only support merged pull requests.
 
 #### Backporting 
 
-The process of backporting a branch is checking out the targeted branch and using `git cherry-pick` with the merge commit. The following process will happen for every branch label in the pull request. The bot will use the `os/exec` package to checkout branches and `cherry-pick` the commit.  
+The process of backporting a branch is checking out the targeted branch and using `git cherry-pick` with the merge commit. The following process will happen for every branch label in the pull request: 
 
-_A potential library to use: [`git2go`](https://github.com/libgit2/git2go) which is essentially a Go wrapper for `libgit2`._
+- Checkout the target branch. 
+- Cherry pick the merge commit against the branch. 
+- Merge the commit to the branch. 
 
-
-```go
-    // Example use of `os/exec`
-    // Will be used with `cherry-pick` command, too. 
-    cmd := exec.Command("git", "checkout", branchName)
-    if err := cmd.Run(); err != nil {
-        if werr, ok := err.(*exec.ExitError); ok {
-            if s := werr.Error(); s != "0" {
-                // non-zero exit code
-                // merge is not clean
-            }
-        }
-    }
-```
-
+ 
 If the merge is clean, the changes will be merged directly into the branch. If not, a comment will be posted on the pull request that requested the backport stating that the bot was unable to backport cleanly. The bot will fail and the author will need to manually backport their changes. 
+
+`git2go` is a library that wraps the functionality of `libgit2` and will be used for the backporting steps, with the exception of the comment in an unclean backport. The Github API will be used, via the [`go-github`](https://github.com/google/go-github) library, to post the comment.  
 
 
 Example comment: 
@@ -269,6 +259,6 @@ Failed to backport changes to <branch>, <branch>, <branch>.
 
 #### Permissions 
 
-To support automatic backporting, `contents:write` and `issues:write` permissions will need to be granted to the Github token. Write access to `contents` is needed for merging the changes and write access to issues will allow posting comments on pull requests in the event of a failed backport.
+To support automatic backporting, `contents:write` and `issues:write` permissions will need to be granted to the Github token. Write access to `contents` is needed for merging the changes and write access to `issues` will allow posting comments on pull requests in the event of a failed backport.
 
 
