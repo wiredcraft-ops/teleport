@@ -3452,6 +3452,50 @@ func (g *GRPCServer) GenerateCertAuthorityCRL(ctx context.Context, req *proto.Ce
 	return &proto.CRL{CRL: crl}, nil
 }
 
+// ListResources retrieves a paginated list of resources.
+func (g *GRPCServer) ListResources(ctx context.Context, req *proto.ListResourcesRequest) (*proto.ListResourcesResponse, error) {
+	auth, err := g.authenticate(ctx)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	resources, nextKey, err := auth.ListResources(ctx, *req)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	resp := &proto.ListResourcesResponse{
+		NextKey:   nextKey,
+		Resources: make([]*proto.Resource, len(resources)),
+	}
+
+	for i, resource := range resources {
+		var protoResource *proto.Resource
+		switch req.ResourceType {
+		case proto.ResourceType_RESOURCE_TYPE_DATABASE_SERVER:
+			database, ok := resource.(*types.DatabaseServerV3)
+			if !ok {
+				return nil, trace.Errorf("database server has invalid type %T", resource)
+			}
+
+			protoResource = &proto.Resource{Resource: &proto.Resource_DatabaseServer{DatabaseServer: database}}
+		case proto.ResourceType_RESOURCE_TYPE_APPLICATION_SERVER:
+			app, ok := resource.(*types.AppServerV3)
+			if !ok {
+				return nil, trace.Errorf("application server has invalid type %T", resource)
+			}
+
+			protoResource = &proto.Resource{Resource: &proto.Resource_ApplicationServer{ApplicationServer: app}}
+		default:
+			return nil, trace.Errorf("unsupported resource type %s", req.ResourceType)
+		}
+
+		resp.Resources[i] = protoResource
+	}
+
+	return resp, nil
+}
+
 // GRPCServerConfig specifies GRPC server configuration
 type GRPCServerConfig struct {
 	// APIConfig is GRPC server API configuration

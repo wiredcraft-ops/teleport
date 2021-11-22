@@ -828,23 +828,21 @@ func (c *Client) GetKubeServices(ctx context.Context) ([]types.Server, error) {
 
 // GetApplicationServers returns all registered application servers.
 func (c *Client) GetApplicationServers(ctx context.Context, namespace string) ([]types.AppServer, error) {
-	resp, err := c.grpc.GetApplicationServers(ctx, &proto.GetApplicationServersRequest{
-		Namespace: namespace,
-	}, c.callOpts...)
+	resources, err := c.ListAllResources(ctx, namespace, proto.ResourceType_RESOURCE_TYPE_APPLICATION_SERVER)
 	if err != nil {
-		if trace.IsNotImplemented(trail.FromGRPC(err)) {
-			servers, err := c.getApplicationServersFallback(ctx, namespace)
-			if err != nil {
-				return nil, trace.Wrap(err)
-			}
-			return servers, nil
+		return nil, trace.Wrap(err)
+	}
+
+	servers := make([]types.AppServer, len(resources))
+	for i, resource := range resources {
+		appServer, ok := resource.(types.AppServer)
+		if !ok {
+			return nil, trace.Errorf("invalid resource type %T", resource)
 		}
-		return nil, trail.FromGRPC(err)
+
+		servers[i] = appServer
 	}
-	var servers []types.AppServer
-	for _, server := range resp.GetServers() {
-		servers = append(servers, server)
-	}
+
 	return servers, nil
 }
 
@@ -1046,16 +1044,21 @@ func (c *Client) DeleteAllKubeServices(ctx context.Context) error {
 
 // GetDatabaseServers returns all registered database proxy servers.
 func (c *Client) GetDatabaseServers(ctx context.Context, namespace string) ([]types.DatabaseServer, error) {
-	resp, err := c.grpc.GetDatabaseServers(ctx, &proto.GetDatabaseServersRequest{
-		Namespace: namespace,
-	}, c.callOpts...)
+	resources, err := c.ListAllResources(ctx, namespace, proto.ResourceType_RESOURCE_TYPE_DATABASE_SERVER)
 	if err != nil {
-		return nil, trail.FromGRPC(err)
+		return nil, trace.Wrap(err)
 	}
-	servers := make([]types.DatabaseServer, 0, len(resp.GetServers()))
-	for _, server := range resp.GetServers() {
-		servers = append(servers, server)
+
+	servers := make([]types.DatabaseServer, len(resources))
+	for i, resource := range resources {
+		databaseServer, ok := resource.(types.DatabaseServer)
+		if !ok {
+			return nil, trace.Errorf("invalid resource type %T", resource)
+		}
+
+		servers[i] = databaseServer
 	}
+
 	return servers, nil
 }
 
@@ -2169,4 +2172,80 @@ func (c *Client) CreateRegisterChallenge(ctx context.Context, in *proto.CreateRe
 func (c *Client) GenerateCertAuthorityCRL(ctx context.Context, req *proto.CertAuthorityRequest) (*proto.CRL, error) {
 	resp, err := c.grpc.GenerateCertAuthorityCRL(ctx, req)
 	return resp, trail.FromGRPC(err)
+}
+
+// ListResources returns a paginated list of nodes that the user has access to.
+// nextKey can be used as startKey in another call to ListResources to retrieve
+// the next page.
+// It will return a `trace.LimitExceeded` error if the page exceeds gRPC max
+// message size.
+func (c *Client) ListResources(ctx context.Context, req proto.ListResourcesRequest) ([]types.Resource, string, error) {
+	if req.Namespace == "" {
+		return nil, "", trace.BadParameter("missing parameter namespace")
+	}
+	if req.Limit <= 0 {
+		return nil, "", trace.BadParameter("nonpositive parameter limit")
+	}
+
+	resp, err := c.grpc.ListResources(ctx, &req, c.callOpts...)
+	if err != nil {
+		return nil, "", trail.FromGRPC(err)
+	}
+
+	resources := make([]types.Resource, len(resp.GetResources()))
+	for i, respResource := range resp.GetResources() {
+		var resource types.Resource
+		switch req.ResourceType {
+		case proto.ResourceType_RESOURCE_TYPE_DATABASE_SERVER:
+			resource = respResource.GetDatabaseServer()
+		case proto.ResourceType_RESOURCE_TYPE_APPLICATION_SERVER:
+			resource = respResource.GetApplicationServer()
+		default:
+			return nil, "", trace.Errorf("unsupported resource type %s", req.ResourceType)
+		}
+
+		resources[i] = resource
+	}
+
+	return resources, resp.NextKey, nil
+}
+
+// ListAllResources retrieves all the resources of a type by iterating through
+// all ListResources to pages until all the resources are listed.
+func (c *Client) ListAllResources(ctx context.Context, namespace string, resourceType proto.ResourceType) ([]types.Resource, error) {
+	var (
+		resources []types.Resource
+		startKey  string
+		chunkSize = int32(defaults.DefaultChunkSize)
+	)
+
+	for {
+		listResources, nextKey, err := c.ListResources(ctx, proto.ListResourcesRequest{
+			Namespace:    namespace,
+			ResourceType: resourceType,
+			StartKey:     startKey,
+			Limit:        chunkSize,
+		})
+		if err != nil {
+			if trace.IsLimitExceeded(err) {
+				chunkSize = chunkSize / 2
+				if chunkSize == 0 {
+					return nil, trace.Wrap(trail.FromGRPC(err), "resource is too large to retrieve")
+				}
+
+				continue
+			}
+
+			return nil, trail.FromGRPC(err)
+		}
+
+		startKey = nextKey
+		resources = append(resources, listResources...)
+		if startKey == "" || len(listResources) == 0 {
+			break
+		}
+
+	}
+
+	return resources, nil
 }

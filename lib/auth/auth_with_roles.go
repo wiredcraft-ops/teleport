@@ -765,6 +765,47 @@ func (a *ServerWithRoles) GetNodes(ctx context.Context, namespace string, opts .
 	return filteredNodes, nil
 }
 
+// ListResources returns a paginated list of resources filtered by user access.
+func (a *ServerWithRoles) ListResources(ctx context.Context, req proto.ListResourcesRequest) ([]types.Resource, string, error) {
+	limit := int(req.Limit)
+	if limit <= 0 {
+		return nil, "", trace.BadParameter("nonpositive parameter limit")
+	}
+
+	var resourceKind string
+	var checkAccessFunc func(types.Resource) error
+	switch req.ResourceType {
+	case proto.ResourceType_RESOURCE_TYPE_DATABASE_SERVER:
+		resourceKind = types.KindDatabaseServer
+		checkAccessFunc = a.checkAccessToDatabaseServer
+	case proto.ResourceType_RESOURCE_TYPE_APPLICATION_SERVER:
+		resourceKind = types.KindAppServer
+		checkAccessFunc = a.checkAccessToAppServer
+	default:
+		return nil, "", trace.Errorf("unsupported resource type %s", req.ResourceType)
+	}
+
+	if err := a.action(req.Namespace, resourceKind, types.VerbList); err != nil {
+		return nil, "", trace.Wrap(err)
+	}
+
+	var resources []types.Resource
+	nextKey, err := a.authServer.IterateResourcePages(ctx, req, func(nextPage []types.Resource) (bool, error) {
+		for _, resource := range nextPage {
+			if err := checkAccessFunc(resource); err == nil {
+				resources = append(resources, resource)
+			}
+		}
+
+		return len(resources) == limit, nil
+	})
+	if err != nil {
+		return nil, "", trace.Wrap(err)
+	}
+
+	return resources, nextKey, nil
+}
+
 // ListNodes returns a paginated list of nodes filtered by user access.
 func (a *ServerWithRoles) ListNodes(ctx context.Context, req proto.ListNodesRequest) (page []types.Server, nextKey string, err error) {
 	if err := a.action(req.Namespace, types.KindNode, types.VerbList); err != nil {
@@ -2783,6 +2824,15 @@ func (a *ServerWithRoles) checkAccessToApp(app types.Application) error {
 		services.AccessMFAParams{Verified: true})
 }
 
+func (a *ServerWithRoles) checkAccessToAppServer(resource types.Resource) error {
+	appServer, ok := resource.(types.AppServer)
+	if !ok {
+		return trace.Errorf("encountered unexpected resource type: %T", resource)
+	}
+
+	return a.checkAccessToApp(appServer.GetApp())
+}
+
 // GetApplicationServers returns all registered application servers.
 func (a *ServerWithRoles) GetApplicationServers(ctx context.Context, namespace string) ([]types.AppServer, error) {
 	if err := a.action(namespace, types.KindAppServer, types.VerbList, types.VerbRead); err != nil {
@@ -2795,7 +2845,7 @@ func (a *ServerWithRoles) GetApplicationServers(ctx context.Context, namespace s
 	// Filter out apps the caller doesn't have access to.
 	var filtered []types.AppServer
 	for _, server := range servers {
-		err := a.checkAccessToApp(server.GetApp())
+		err := a.checkAccessToAppServer(server)
 		if err != nil && !trace.IsAccessDenied(err) {
 			return nil, trace.Wrap(err)
 		} else if err == nil {
@@ -3367,6 +3417,15 @@ func (a *ServerWithRoles) checkAccessToDatabase(database types.Database) error {
 		// MFA is not required for operations on database resources but
 		// will be enforced at the connection time.
 		services.AccessMFAParams{Verified: true})
+}
+
+func (a *ServerWithRoles) checkAccessToDatabaseServer(resource types.Resource) error {
+	databaseServer, ok := resource.(types.DatabaseServer)
+	if !ok {
+		return trace.Errorf("encountered unexpected resource type: %T", resource)
+	}
+
+	return a.checkAccessToDatabase(databaseServer.GetDatabase())
 }
 
 // CreateDatabase creates a new database resource.
