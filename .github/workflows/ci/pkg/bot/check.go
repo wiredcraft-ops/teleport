@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sort"
 	"strings"
 	"time"
 
@@ -57,6 +56,12 @@ func (c *Bot) checkInternal(ctx context.Context) error {
 	if err != nil {
 		return trace.Wrap(err)
 	}
+	// If an admin approves a pull request, allow the check workflow run to pass.
+	// This is used in the event the pull request needs the bypassing
+	// of the required reviewers.
+	if repoAdminHasApproved(mostRecentReviews) {
+		return nil
+	}
 	log.Printf("Checking if %v has approvals from the required reviewers %+v", pr.Author, c.Environment.GetReviewersForAuthor(pr.Author))
 	err = hasRequiredApprovals(mostRecentReviews, c.Environment.GetReviewersForAuthor(pr.Author))
 	if err != nil {
@@ -65,42 +70,69 @@ func (c *Bot) checkInternal(ctx context.Context) error {
 	return nil
 }
 
+// repoAdminHasApproved checks that at least one listed admin has approved.
+func repoAdminHasApproved(reviews map[string]review) bool {
+	for _, adminName := range ci.RepoAdmins {
+		if hasApproved(adminName, reviews) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkExternal is called to check if a PR reviewed and approved by the
 // required reviewers for external contributors. Approvals for external
 // contributors are dismissed when new changes are pushed to the PR. The only
 // case in which reviews are not dismissed is if they are from GitHub and
 // only update the PR.
 func (c *Bot) checkExternal(ctx context.Context) error {
-	var obsoleteReviews map[string]review
-	var validReviews map[string]review
-
 	pr := c.Environment.Metadata
 	mostRecentReviews, err := c.getMostRecentReviews(ctx)
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	validReviews, obsoleteReviews = splitReviews(pr.HeadSHA, mostRecentReviews)
 	// External contributions require tighter scrutiny than team
 	// contributions. As such reviews from previous pushes must
 	// not carry over to when new changes are added. Github does
 	// not do this automatically, so we must dismiss the reviews
 	// manually if there is a file change.
-	if err = c.hasFileChangeFromLastApprovedReview(ctx); err != nil {
-		err = c.invalidateApprovals(ctx, obsoleteReviews)
+	staleReviews, err := c.getStaleReviews(ctx, mostRecentReviews)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	// Delete invalid reviews from map that will be
+	// checked for required approvals.
+	for _, staleReview := range staleReviews {
+		delete(mostRecentReviews, staleReview.name)
+	}
+	if len(staleReviews) != 0 {
+		err = c.invalidateApprovals(ctx, staleReviews)
 		if err != nil {
 			return trace.Wrap(err)
 		}
-	} else {
-		// If there are no file changes between current commit and commit where all 
-		// reviewers have approved, then all most recent reviews are valid.
-		validReviews = mostRecentReviews
 	}
 	log.Printf("Checking if %v has approvals from the required reviewers %+v", pr.Author, c.Environment.GetReviewersForAuthor(pr.Author))
-	err = hasRequiredApprovals(validReviews, c.Environment.GetReviewersForAuthor(pr.Author))
+	err = hasRequiredApprovals(mostRecentReviews, c.Environment.GetReviewersForAuthor(pr.Author))
 	if err != nil {
 		return trace.Wrap(err)
 	}
 	return nil
+}
+
+// getStaleReviews gets reviews that were submitted before a new non-empty commit was pushed.
+func (c *Bot) getStaleReviews(ctx context.Context, reviews map[string]review) (map[string]review, error) {
+	headSHA := c.Environment.Metadata.HeadSHA
+	staleReviews := map[string]review{}
+	for _, review := range reviews {
+		detectedFileChange, err := c.hasFileDiff(ctx, review.commitID, headSHA, c.compareCommits)
+		if err != nil {
+			return nil, trace.Wrap(err)
+		}
+		if detectedFileChange {
+			staleReviews[review.name] = review
+		}
+	}
+	return staleReviews, nil
 }
 
 // splitReviews splits a list of reviews into two lists: `valid` (those reviews that refer to
@@ -235,109 +267,34 @@ func hasApproved(reviewer string, reviews map[string]review) bool {
 // dimissMessage returns the dimiss message when a review is dismissed
 func dismissMessage(pr *environment.Metadata, required []string) string {
 	var sb strings.Builder
-	sb.WriteString("new commit pushed, please re-review ")
+	sb.WriteString("New commit pushed, please re-review ")
 	for _, reviewer := range required {
-		sb.WriteString(fmt.Sprintf("@%s", reviewer))
+		sb.WriteString(fmt.Sprintf("@%s ", reviewer))
 	}
-	return sb.String()
+	return strings.TrimSpace(sb.String())
 }
 
-// hasFileChangeFromLastApproved checks if there is a file change from the last commit all 
-// reviewers approved (if all reviewers approved at a commit) to the current HEAD. 
-func (c *Bot) hasFileChangeFromLastApprovedReview(ctx context.Context) error {
+// hasFileDiff compares two commits and checks if there are changes.
+func (c *Bot) hasFileDiff(ctx context.Context, base, head string, compare commitComparer) (bool, error) {
 	pr := c.Environment.Metadata
-	lastReviewCommitID, err := c.getLastApprovedReviewCommitID(ctx)
+	comparison, _, err := compare.CompareCommits(ctx, pr.RepoOwner, pr.RepoName, base, head)
 	if err != nil {
-		return trace.Wrap(err)
-	}
-	mostRecent, err := c.getMostRecentReviews(ctx)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	// Make sure all approvals are at the same commit.
-	err = hasAllRequiredApprovalsAtCommit(lastReviewCommitID, mostRecent, c.Environment.GetReviewersForAuthor(pr.Author))
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	// Check for any differences
-	err = c.hasFileDiff(ctx, lastReviewCommitID, pr.HeadSHA)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	return nil
-}
-
-// getLastApprovedReviewCommitID gets the last review's commit ID (last review where a commit was approved). 
-func (c *Bot) getLastApprovedReviewCommitID(ctx context.Context) (string, error) {
-	pr := c.Environment.Metadata
-	clt := c.Environment.Client
-	reviews, _, err := clt.PullRequests.ListReviews(ctx, pr.RepoOwner, pr.RepoName, pr.Number, &github.ListOptions{})
-	if err != nil {
-		return "", trace.Wrap(err)
-	}
-	if len(reviews) == 0 {
-		return "", trace.NotFound("pull request has no reviews")
-	}
-
-	// Sort reviews from newest to oldest.
-	sort.Slice(reviews, func(i, j int) bool {
-		time1, time2 := reviews[i].SubmittedAt, reviews[j].SubmittedAt
-		return time2.Before(*time1)
-	})
-	var lastApprovedReview *github.PullRequestReview
-	// Find last approved review.
-	for _, review := range reviews {
-		if review.State == nil {
-			continue
-		}
-		if *review.State == ci.Approved {
-			lastApprovedReview = review
-			break
-		}
-	}
-	if lastApprovedReview == nil {
-		return "", trace.NotFound("no approved reviews found")
-	}
-	if lastApprovedReview.CommitID == nil {
-		return "", trace.NotFound("commit ID not found")
-	}
-	return *lastApprovedReview.CommitID, nil
-}
-
-// hasFileDiff compares two commits and checks if there are changes. 
-func (c *Bot) hasFileDiff(ctx context.Context, base, head string) error {
-	pr := c.Environment.Metadata
-	clt := c.Environment.Client
-	comparison, _, err := clt.Repositories.CompareCommits(ctx, pr.RepoOwner, pr.RepoName, base, head)
-	if err != nil {
-		return trace.Wrap(err)
+		return true, trace.Wrap(err)
 	}
 	if len(comparison.Files) != 0 {
-		return trace.Errorf("detected file change")
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
-func hasAllRequiredApprovalsAtCommit(commitSHA string, reviews map[string]review, required []string) error {
-	for _, requiredReviewer := range required {
-		review, ok := reviews[requiredReviewer]
-		if !ok {
-			return trace.BadParameter("all reviewers have not approved")
-		}
-		if review.commitID != commitSHA {
-			return trace.Errorf("all reviewers have not approved at %s", commitSHA)
-		}
-	}
-	return nil
-}
-
-// invalidateApprovals dismisses all approved reviews on a pull request.
+// invalidateApprovals dismisses the specified reviews on a pull request.
 func (c *Bot) invalidateApprovals(ctx context.Context, reviews map[string]review) error {
 	pr := c.Environment.Metadata
+	clt := c.Environment.Client
 	msg := dismissMessage(pr, c.Environment.GetReviewersForAuthor(pr.Author))
 	for _, v := range reviews {
-		if pr.HeadSHA != v.commitID {
-			_, _, err := c.Environment.Client.PullRequests.DismissReview(ctx,
+		if v.status != ci.Commented {
+			_, _, err := clt.PullRequests.DismissReview(ctx,
 				pr.RepoOwner,
 				pr.RepoName,
 				pr.Number,
@@ -349,5 +306,7 @@ func (c *Bot) invalidateApprovals(ctx context.Context, reviews map[string]review
 			}
 		}
 	}
-	return nil
+	// Re-assign reviewers when dismissing so the
+	// pull request shows up in their review requests again.
+	return c.Assign(ctx)
 }
