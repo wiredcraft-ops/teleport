@@ -197,7 +197,7 @@ jobs:
 
 ###  What 
 
-Automatically backport changes to specfic branches. 
+Automatically opening up pull requests for backport changes to specfic branches. 
 
 ### Why 
 
