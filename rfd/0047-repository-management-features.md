@@ -216,7 +216,7 @@ When there is a pull request opened and needs to be backported, the author will 
  @github-actions Backport branch-1, branch-2
 ```
 
-#### Backport Requests
+#### Trigger
 
 The workflow will trigger anytime the `issue_comment` event occurs. 
 
@@ -238,27 +238,28 @@ on:
 The backport bot will only support merged pull requests. 
 
 
-#### Backporting 
+#### Process 
 
 The process of backporting a branch is checking out the targeted branch and using `git cherry-pick` with the merge commit. The following process will happen for every branch label in the pull request: 
 
 - Checkout the target branch. 
-- Cherry pick the merge commit against the branch. 
-- Merge the commit to the branch. 
+- Checkout a new branch.
+- Cherry pick the merge commit against the new branch. 
+- Open a pull request with the changes.
 
  
-If the merge is clean, the changes will be merged directly into the branch. If not, a comment will be posted on the pull request that requested the backport stating that the bot was unable to backport cleanly. The bot will fail and the author will need to manually backport their changes. 
+If the merge is clean, the changes will be opened up in a pull request and the original author will be notified via comment. If not, a comment will be posted on the pull request that requested the backport stating that the bot was unable to backport cleanly to open a PR. In the latter case, the bot will fail and the author will need to manually open up their own pull requests and backport their changes. 
 
 `git2go` is a library that wraps the functionality of `libgit2` and will be used for the backporting steps, with the exception of the comment in an unclean backport. The Github API will be used, via the [`go-github`](https://github.com/google/go-github) library, to post the comment.  
 
 
 Example comment: 
 ```
-Failed to backport changes to <branch>, <branch>, <branch>.
+Failed to open up pull requests to backport changes to <branch>, <branch>, <branch>.
 ```
 
 #### Permissions 
 
-To support automatic backporting, `contents:write` and `issues:write` permissions will need to be granted to the Github token. Write access to `contents` is needed for merging the changes and write access to `issues` will allow posting comments on pull requests in the event of a failed backport.
+To support automatic backporting, `pull-requests:write` and `issues:write` permissions will need to be granted to the Github token. Write access to `pull-requests` is needed for opening up a pull request in the repository and write access to `issues` will allow posting comments on pull requests in the event of a failed backport.
 
 
