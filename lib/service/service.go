@@ -2986,6 +2986,10 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 		return trace.Wrap(err)
 	}
 
+	rcWatchLog := logrus.WithFields(logrus.Fields{
+		trace.Component: teleport.Component(teleport.ComponentReverseTunnelAgent, process.id),
+	})
+
 	// Create and register reverse tunnel AgentPool.
 	rcWatcher, err := reversetunnel.NewRemoteClusterTunnelManager(reversetunnel.RemoteClusterTunnelManagerConfig{
 		HostUUID:            conn.ServerIdentity.ID.HostUUID,
@@ -2996,16 +3000,14 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 		KubeDialAddr:        utils.DialAddrFromListenAddr(kubeDialAddr(cfg.Proxy, clusterNetworkConfig.GetProxyListenerMode())),
 		ReverseTunnelServer: tsrv,
 		FIPS:                process.Config.FIPS,
+		Log:                 rcWatchLog,
 	})
 	if err != nil {
 		return trace.Wrap(err)
 	}
 
 	process.RegisterCriticalFunc("proxy.reversetunnel.watcher", func() error {
-		log := logrus.WithFields(logrus.Fields{
-			trace.Component: teleport.Component(teleport.ComponentReverseTunnelAgent, process.id),
-		})
-		log.Infof("Starting reverse tunnel agent pool.")
+		rcWatchLog.Infof("Starting reverse tunnel agent pool.")
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
