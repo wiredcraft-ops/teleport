@@ -386,6 +386,9 @@ const (
 	// computerClass is the object class for computers in Active Directory
 	computerClass = "computer"
 
+	// gmsaClass is the object class for group managed service accounts in Active Directory.
+	gmsaClass = "msDS-GroupManagedServiceAccount"
+
 	attrName        = "name"
 	attrDNSHostName = "dNSHostName" // unusual capitalization is correct
 	attrObjectGUID  = "objectGUID"
@@ -396,9 +399,13 @@ const (
 // startDiscoveredHostHeartbeats kicks off background processing to discover Windows
 // hosts via LDAP and perform heartbeats to record them with the auth server
 func (s *WindowsService) startDiscoveredHostHeartbeats() error {
+	// for some reason, group managed service accounts show up when searching
+	// for objectClass=computer, so we explicitly filter these out
+	filter := fmt.Sprintf("(&(objectClass=%v)(!(objectClass=%v)))", computerClass, gmsaClass)
+
 	// here we're searching for computers using an empty ldapPath
 	// in order to search from the root
-	entries, err := s.lc.read(ldapPath{}, computerClass, computerAttribtes)
+	entries, err := s.lc.readWithFilter(ldapPath{}, filter, computerAttribtes)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -826,6 +833,8 @@ func (s *WindowsService) updateCAInNTAuthStore(ctx context.Context, caDER []byte
 			return nil
 		}
 	}
+
+	s.cfg.Log.Debugf("None of the %d existing NTAuthCertificates matched Teleport's", len(existingCAs))
 
 	// CA is not in the store, append it.
 	updatedCAs := make([]string, 0, len(existingCAs)+1)

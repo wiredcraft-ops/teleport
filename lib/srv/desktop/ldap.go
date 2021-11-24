@@ -76,6 +76,29 @@ func (c *ldapClient) close() {
 	c.client.Close()
 }
 
+// readWithFilter performs searches path and its children using the specified LDAP filter.
+// See https://ldap.com/ldap-filters/ for more information on LDAP filter syntax.
+func (c *ldapClient) readWithFilter(path ldapPath, filter string, attrs []string) ([]*ldap.Entry, error) {
+	dn := c.cfg.dn(path)
+	req := ldap.NewSearchRequest(
+		dn,
+		ldap.ScopeWholeSubtree,
+		ldap.DerefAlways,
+		0,     // no SizeLimit
+		0,     // no TimeLimit
+		false, // TypesOnly == false, we want attribute values
+		filter,
+		attrs,
+		nil, // no Controls
+	)
+	res, err := c.client.Search(req)
+	if err != nil {
+		return nil, trace.Wrap(err, "fetching LDAP object %q: %v", dn, err)
+	}
+	return res.Entries, nil
+
+}
+
 // read fetches an LDAP entry at path and its children, if any. Only
 // entries with the given class are returned and only with the specified
 // attributes.
@@ -85,23 +108,7 @@ func (c *ldapClient) close() {
 // You can find the list of all AD classes at
 // https://docs.microsoft.com/en-us/windows/win32/adschema/classes-all
 func (c *ldapClient) read(path ldapPath, class string, attrs []string) ([]*ldap.Entry, error) {
-	dn := c.cfg.dn(path)
-	req := ldap.NewSearchRequest(
-		dn,
-		ldap.ScopeWholeSubtree,
-		ldap.DerefAlways,
-		0,     // no SizeLimit
-		0,     // no TimeLimit
-		false, // TypesOnly == false, we want attribute values
-		fmt.Sprintf("(objectClass=%s)", class),
-		attrs,
-		nil, // no Controls
-	)
-	res, err := c.client.Search(req)
-	if err != nil {
-		return nil, trace.Wrap(err, "fetching LDAP object %q: %v", dn, err)
-	}
-	return res.Entries, nil
+	return c.readWithFilter(path, fmt.Sprintf("(objectClass=%s)", class), attrs)
 }
 
 // create creates an LDAP entry at the given path, with the given class and
