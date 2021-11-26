@@ -28,6 +28,7 @@ import (
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/lib/config"
+	dbconfigurators "github.com/gravitational/teleport/lib/configurators/databases"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/modules"
 	"github.com/gravitational/teleport/lib/service"
@@ -64,9 +65,13 @@ func Run(options Options) (app *kingpin.Application, executedCommand string, con
 	app = utils.InitCLIParser("teleport", "Clustered SSH service. Learn more at https://goteleport.com/teleport")
 
 	// define global flags:
-	var ccf config.CommandLineFlags
-	var scpFlags scp.Flags
-	var dumpFlags dumpFlags
+	var (
+		ccf                             config.CommandLineFlags
+		scpFlags                        scp.Flags
+		dumpFlags                       dumpFlags
+		configureDatabaseAWSPrintFlags  configureDatabaseAWSPrintFlags
+		configureDatabaseAWSCreateFlags configureDatabaseAWSCreateFlags
+	)
 
 	// define commands:
 	start := app.Command("start", "Starts the Teleport service.")
@@ -201,6 +206,27 @@ func Run(options Options) (app *kingpin.Application, executedCommand string, con
 	dbStartCmd.Flag("gcp-project-id", "(Only for Cloud SQL) GCP Cloud SQL project identifier.").StringVar(&ccf.DatabaseGCPProjectID)
 	dbStartCmd.Flag("gcp-instance-id", "(Only for Cloud SQL) GCP Cloud SQL instance identifier.").StringVar(&ccf.DatabaseGCPInstanceID)
 	dbStartCmd.Alias(dbUsageExamples) // We're using "alias" section to display usage examples.
+	dbConfigure := dbCmd.Command("configure", "Database agent bootstrap.")
+	dbConfigureAWS := dbConfigure.Command("aws", "Bootstrap for AWS hosted databases.")
+	dbConfigureAWSPrintIAM := dbConfigureAWS.Command("print-iam", "Generate and show IAM policies.")
+	dbConfigureAWSPrintIAM.Flag("types",
+		fmt.Sprintf("Comma-separated list of database types to include in the policy. Any of %s", strings.Join(dbconfigurators.AWSTypes, ","))).
+		Short('r').
+		StringVar(&configureDatabaseAWSPrintFlags.config.Types)
+	dbConfigureAWSPrintIAM.Flag("role", "IAM role name to attach policy to. Mutually exclusive with --user").StringVar(&configureDatabaseAWSPrintFlags.config.Role)
+	dbConfigureAWSPrintIAM.Flag("user", "IAM user name to attach policy to. Mutually exclusive with --role").StringVar(&configureDatabaseAWSPrintFlags.config.User)
+	dbConfigureAWSPrintIAM.Flag("policy", "Only print IAM policy document.").BoolVar(&configureDatabaseAWSPrintFlags.policyOnly)
+	dbConfigureAWSPrintIAM.Flag("boundary", "Only print IAM boundary policy document.").BoolVar(&configureDatabaseAWSPrintFlags.boundaryOnly)
+	dbConfigureAWSCreateIAM := dbConfigureAWS.Command("create-iam", "Generate, create and attach IAM policies.")
+	dbConfigureAWSCreateIAM.Flag("types",
+		fmt.Sprintf("Comma-separated list of database types to include in the policy. Any of %s", strings.Join(dbconfigurators.AWSTypes, ","))).
+		Short('r').
+		StringVar(&configureDatabaseAWSCreateFlags.config.Types)
+	dbConfigureAWSCreateIAM.Flag("name", "Created policy name. Defaults to empty. Will be auto-generated if not provided.").StringVar(&configureDatabaseAWSCreateFlags.config.PolicyName)
+	dbConfigureAWSCreateIAM.Flag("attach", "Try to attach the policy to the IAM identity.").Default("true").BoolVar(&configureDatabaseAWSCreateFlags.attach)
+	dbConfigureAWSCreateIAM.Flag("confirm", "Do not prompt user and auto-confirm all actions.").BoolVar(&configureDatabaseAWSCreateFlags.confirm)
+	dbConfigureAWSCreateIAM.Flag("role", "IAM role name to attach policy to. Mutually exclusive with --user").StringVar(&configureDatabaseAWSCreateFlags.config.Role)
+	dbConfigureAWSCreateIAM.Flag("user", "IAM user name to attach policy to. Mutually exclusive with --role").StringVar(&configureDatabaseAWSCreateFlags.config.User)
 
 	// define a hidden 'scp' command (it implements server-side implementation of handling
 	// 'scp' requests)
@@ -277,6 +303,10 @@ func Run(options Options) (app *kingpin.Application, executedCommand string, con
 		err = onForward()
 	case ver.FullCommand():
 		utils.PrintVersion()
+	case dbConfigureAWSPrintIAM.FullCommand():
+		err = onConfigureDatabasesAWSPrint(configureDatabaseAWSPrintFlags)
+	case dbConfigureAWSCreateIAM.FullCommand():
+		err = onConfigureDatabasesAWSCreate(configureDatabaseAWSCreateFlags)
 	}
 	if err != nil {
 		utils.FatalError(err)
@@ -484,6 +514,130 @@ func onExec() error {
 func onForward() error {
 	srv.RunAndExit(teleport.ForwardSubCommand)
 	return nil
+}
+
+// configureDatabaseAWSPrintFlags flags of the "db configure aws print-iam"
+// subcommand.
+type configureDatabaseAWSPrintFlags struct {
+	config       dbconfigurators.AWSManualInstructionsConfig
+	policyOnly   bool
+	boundaryOnly bool
+}
+
+// onConfigureDatabasesAWSPrint is a subcommand used to print AWS IAM access
+// Teleport requires to run databases discovery on AWS.
+func onConfigureDatabasesAWSPrint(conf configureDatabaseAWSPrintFlags) error {
+	info, err := dbconfigurators.GetAWSFormattedInformation(conf.config)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	if conf.policyOnly {
+		fmt.Println(info.PolicyDocument)
+		return nil
+	}
+
+	if conf.boundaryOnly {
+		fmt.Println(info.BoundaryDocument)
+		return nil
+	}
+
+	fmt.Println("1. Create the following IAM policy named \"DatabaseAccess\":")
+	fmt.Println(info.PolicyDocument + "\n")
+	fmt.Println("2. Create the following IAM policy named \"DatabaseAccessBoundary\":")
+	fmt.Println(info.BoundaryDocument + "\n")
+	fmt.Printf("3. Attach policy \"DatabaseAccess\" and boundary \"DatabaseAccessBoundary\" to %s \"%s\".\n", info.TargetType, info.Target)
+	return nil
+}
+
+// configureDatabaseAWSPrintFlags flags of the "db configure aws create-iam"
+// subcommand.
+type configureDatabaseAWSCreateFlags struct {
+	config  dbconfigurators.AWSConfiguratorConfig
+	attach  bool
+	confirm bool
+}
+
+// onConfigureDatabasesAWSCreates is a subcommand used to create AWS IAM access
+// for Teleport to run databases discovery on AWS.
+func onConfigureDatabasesAWSCreate(conf configureDatabaseAWSCreateFlags) error {
+	var (
+		policyArn  string
+		boundryArn string
+		err        error
+	)
+
+	configurator, err := dbconfigurators.NewAWSConfigurator(&conf.config)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	info, err := configurator.GetFormattedInformation()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	fmt.Printf("Will create IAM policy \"%s\":\n%s\n", info.PolicyName, info.PolicyDocument)
+	if requestConfirmation(conf.confirm) {
+		policyArn, err = configurator.CreatePolicy()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		fmt.Printf("Creating IAM policy %s... done\n", info.PolicyName)
+	}
+
+	fmt.Printf("\nWill create IAM boundary \"%s\":\n%s\n", info.BoundaryName, info.BoundaryDocument)
+	if requestConfirmation(conf.confirm) {
+		boundryArn, err = configurator.CreateBoundaryPolicy()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		fmt.Printf("Creating IAM policy boundary %s... done\n", info.BoundaryName)
+	}
+
+	if !conf.attach {
+		return nil
+	}
+
+	if policyArn == "" || boundryArn == "" {
+		fmt.Println("\nSkipping attach policies since they weren't created.")
+		return nil
+	}
+
+	fmt.Printf("\nWill attach IAM policy and boundary to %s \"%s\". ", info.TargetType, info.Target)
+	if requestConfirmation(conf.confirm) {
+		err = configurator.AttachPolicyAndBoundary(policyArn, boundryArn)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+
+		fmt.Printf("Attaching IAM policy and boundary to IAM %s \"%s\"... done\n", info.TargetType, info.Target)
+	}
+
+	return nil
+}
+
+// requestConfirmation waits for user confirmation and returns `true` if the
+// user confirms. The confirmation is done by typing "yes" or "y". The caller
+// can provide an autoConfirm param which will skip the user input and return
+// `true`.
+func requestConfirmation(autoConfirm bool) bool {
+	if autoConfirm {
+		return true
+	}
+
+	var confirmInputText string
+	fmt.Print("Confirm? [y/N] ")
+	_, _ = fmt.Scanln(&confirmInputText)
+
+	switch strings.ToLower(strings.TrimSpace(confirmInputText)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 type StdReadWriter struct {
