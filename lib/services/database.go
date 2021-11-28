@@ -140,10 +140,27 @@ func NewDatabaseFromRDSCluster(cluster *rds.DBCluster) (types.Database, error) {
 	return types.NewDatabaseV3(types.Metadata{
 		Name:        aws.StringValue(cluster.DBClusterIdentifier),
 		Description: fmt.Sprintf("Aurora cluster in %v", metadata.Region),
-		Labels:      labelsFromRDSCluster(cluster, metadata),
+		Labels:      labelsFromRDSCluster(cluster, metadata, RDSEndpointTypePrimary),
 	}, types.DatabaseSpecV3{
 		Protocol: engineToProtocol(aws.StringValue(cluster.Engine)),
 		URI:      fmt.Sprintf("%v:%v", aws.StringValue(cluster.Endpoint), aws.Int64Value(cluster.Port)),
+		AWS:      *metadata,
+	})
+}
+
+// NewDatabaseFromRDSClusterReader creates a database resource from an RDS cluster reader endpoint (Aurora).
+func NewDatabaseFromRDSClusterReader(cluster *rds.DBCluster) (types.Database, error) {
+	metadata, err := MetadataFromRDSCluster(cluster)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return types.NewDatabaseV3(types.Metadata{
+		Name:        aws.StringValue(cluster.DBClusterIdentifier) + nameSuffixReader,
+		Description: fmt.Sprintf("Aurora cluster in %v (reader endpoint)", metadata.Region),
+		Labels:      labelsFromRDSCluster(cluster, metadata, RDSEndpointTypeReader),
+	}, types.DatabaseSpecV3{
+		Protocol: engineToProtocol(aws.StringValue(cluster.Engine)),
+		URI:      fmt.Sprintf("%v:%v", aws.StringValue(cluster.ReaderEndpoint), aws.Int64Value(cluster.Port)),
 		AWS:      *metadata,
 	})
 }
@@ -202,17 +219,19 @@ func labelsFromRDSInstance(rdsInstance *rds.DBInstance, meta *types.AWS) map[str
 	labels[labelRegion] = meta.Region
 	labels[labelEngine] = aws.StringValue(rdsInstance.Engine)
 	labels[labelEngineVersion] = aws.StringValue(rdsInstance.EngineVersion)
+	labels[labelEndpointType] = string(RDSEndpointTypeInstance)
 	return labels
 }
 
 // labelsFromRDSCluster creates database labels for the provided RDS cluster.
-func labelsFromRDSCluster(rdsCluster *rds.DBCluster, meta *types.AWS) map[string]string {
+func labelsFromRDSCluster(rdsCluster *rds.DBCluster, meta *types.AWS, endpointType RDSEndpointType) map[string]string {
 	labels := tagsToLabels(rdsCluster.TagList)
 	labels[types.OriginLabel] = types.OriginCloud
 	labels[labelAccountID] = meta.AccountID
 	labels[labelRegion] = meta.Region
 	labels[labelEngine] = aws.StringValue(rdsCluster.Engine)
 	labels[labelEngineVersion] = aws.StringValue(rdsCluster.EngineVersion)
+	labels[labelEndpointType] = string(endpointType)
 	return labels
 }
 
@@ -234,6 +253,13 @@ const (
 	labelEngine = "engine"
 	// labelEngineVersion is the label key containing RDS database engine version.
 	labelEngineVersion = "engine-version"
+	// labelEndpointType is the label key containing endpoint type.
+	labelEndpointType = "endpoint-type"
+)
+
+const (
+	// nameSuffixReader is the suffix added to the name of a database that connects to a cluster reader endpoint.
+	nameSuffixReader = "-reader"
 )
 
 const (
@@ -247,4 +273,17 @@ const (
 	RDSEngineAuroraMySQL = "aurora-mysql"
 	// RDSEngineAuroraPostgres is RDS engine name for Aurora Postgres clusters.
 	RDSEngineAuroraPostgres = "aurora-postgresql"
+)
+
+// RDSEndpointType specifies the endpoint type
+type RDSEndpointType string
+
+const (
+	// RDSEndpointTypePrimary is the endpoint that specifies the connection for the primary instance of the RDS cluster.
+	RDSEndpointTypePrimary RDSEndpointType = "primary"
+	// RDSEndpointTypeReader is the endpoint that load-balances connections across the Aurora Replicas that are
+	// available in a RDS cluster.
+	RDSEndpointTypeReader RDSEndpointType = "reader"
+	// RDSEndpointTypeInstance is the endpoint that the address of the DB instance.
+	RDSEndpointTypeInstance RDSEndpointType = "instance"
 )
