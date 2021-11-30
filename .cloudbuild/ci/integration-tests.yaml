@@ -2,7 +2,7 @@ steps:
   # Run non-root integration tests. The root user is selected by docker image.
   - name: us-docker.pkg.dev/ci-account/teleport/buildbox-root:v0.1.0
     id: root-integration-test
-    args: ['make', 'rdpclient', 'integration-root']
+    args: ['make', 'integration-root']
     timeout: 10m
 
   # Reconfigure the workspace for the non-root user
