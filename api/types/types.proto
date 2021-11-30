@@ -243,6 +243,8 @@ message DatabaseSpecV3 {
     // URI is the database connection endpoint.
     string URI = 2 [ (gogoproto.jsontag) = "uri" ];
     // CACert is the PEM-encoded database CA certificate.
+    //
+    // DEPRECATED: Moved to TLS.CACert. DELETE IN 10.0.
     string CACert = 3 [ (gogoproto.jsontag) = "ca_cert,omitempty" ];
     // DynamicLabels is the database dynamic labels.
     map<string, CommandLabelV2> DynamicLabels = 4
@@ -251,6 +253,8 @@ message DatabaseSpecV3 {
     AWS AWS = 5 [ (gogoproto.nullable) = false, (gogoproto.jsontag) = "aws,omitempty" ];
     // GCP contains parameters specific to GCP Cloud SQL databases.
     GCPCloudSQL GCP = 6 [ (gogoproto.nullable) = false, (gogoproto.jsontag) = "gcp,omitempty" ];
+
+    DatabaseTLS TLS = 7 [ (gogoproto.nullable) = false, (gogoproto.jsontag) = "tls,omitempty" ];
 }
 
 // DatabaseStatusV3 contains runtime information about the database.
@@ -298,6 +302,21 @@ message GCPCloudSQL {
     string ProjectID = 1 [ (gogoproto.jsontag) = "project_id,omitempty" ];
     // InstanceID is the Cloud SQL instance ID.
     string InstanceID = 2 [ (gogoproto.jsontag) = "instance_id,omitempty" ];
+}
+
+enum DatabaseTLSMode {
+    UNSPECIFIED = 0;
+    VERIFY_FULL = 1;
+    VERIFY_CA = 2;
+    INSECURE = 3;
+}
+
+message DatabaseTLS {
+    DatabaseTLSMode Mode = 1 [ (gogoproto.jsontag) = "mode" ];
+
+    string CACert = 2 [ (gogoproto.jsontag) = "ca_cert,omitempty" ];
+
+    string ServerName = 3 [ (gogoproto.jsontag) = "server_name,omitempty" ];
 }
 
 // ServerV2 represents a Node, App, Database, Proxy or Auth server in a Teleport cluster.
