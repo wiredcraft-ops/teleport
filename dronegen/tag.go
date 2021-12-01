@@ -128,6 +128,7 @@ func tagCopyArtifactCommands(b buildType) []string {
 			)
 		}
 	}
+	// TODO(zmb3): do we need to do this for centos7 as well?
 
 	// generate checksums
 	commands = append(commands, fmt.Sprintf(`cd /go/artifacts && for FILE in teleport*%s; do sha256sum $FILE > $FILE.sha256; done && ls -l`, extension))
@@ -147,13 +148,13 @@ func uploadToS3Step(s s3Settings) step {
 		Name:  "Upload to S3",
 		Image: "plugins/s3",
 		Settings: map[string]value{
-			"bucket":       value{fromSecret: "AWS_S3_BUCKET"},
-			"access_key":   value{fromSecret: "AWS_ACCESS_KEY_ID"},
-			"secret_key":   value{fromSecret: "AWS_SECRET_ACCESS_KEY"},
-			"region":       value{raw: s.region},
-			"source":       value{raw: s.source},
-			"target":       value{raw: s.target},
-			"strip_prefix": value{raw: s.stripPrefix},
+			"bucket":       {fromSecret: "AWS_S3_BUCKET"},
+			"access_key":   {fromSecret: "AWS_ACCESS_KEY_ID"},
+			"secret_key":   {fromSecret: "AWS_SECRET_ACCESS_KEY"},
+			"region":       {raw: s.region},
+			"source":       {raw: s.source},
+			"target":       {raw: s.target},
+			"strip_prefix": {raw: s.stripPrefix},
 		},
 	}
 }
@@ -180,9 +181,11 @@ func tagPipelines() []pipeline {
 	// Only amd64 Windows is supported for now.
 	ps = append(ps, tagPipeline(buildType{os: "windows", arch: "amd64"}))
 
-	// Also add the two CentOS 6 artifacts.
+	// Also add CentOS artifacts
 	// CentOS 6 FIPS builds have been removed in Teleport 7.0. See https://github.com/gravitational/teleport/issues/7207
 	ps = append(ps, tagPipeline(buildType{os: "linux", arch: "amd64", centos6: true}))
+	ps = append(ps, tagPipeline(buildType{os: "linux", arch: "amd64", centos7: true}))
+	ps = append(ps, tagPipeline(buildType{os: "linux", arch: "amd64", centos7: true, fips: true}))
 
 	ps = append(ps, darwinTagPipeline(), darwinTeleportPkgPipeline(), darwinTshPkgPipeline())
 	return ps
@@ -200,14 +203,16 @@ func tagPipeline(b buildType) pipeline {
 	pipelineName := fmt.Sprintf("build-%s-%s", b.os, b.arch)
 	if b.centos6 {
 		pipelineName += "-centos6"
+	} else if b.centos7 {
+		pipelineName += "-centos7"
 	}
 	tagEnvironment := map[string]value{
-		"UID":     value{raw: "1000"},
-		"GID":     value{raw: "1000"},
-		"GOCACHE": value{raw: "/go/cache"},
-		"GOPATH":  value{raw: "/go"},
-		"OS":      value{raw: b.os},
-		"ARCH":    value{raw: b.arch},
+		"UID":     {raw: "1000"},
+		"GID":     {raw: "1000"},
+		"GOCACHE": {raw: "/go/cache"},
+		"GOPATH":  {raw: "/go"},
+		"OS":      {raw: b.os},
+		"ARCH":    {raw: b.arch},
 	}
 	if b.fips {
 		pipelineName += "-fips"
@@ -233,7 +238,7 @@ func tagPipeline(b buildType) pipeline {
 			Name:  "Check out code",
 			Image: "docker:git",
 			Environment: map[string]value{
-				"GITHUB_PRIVATE_KEY": value{fromSecret: "GITHUB_PRIVATE_KEY"},
+				"GITHUB_PRIVATE_KEY": {fromSecret: "GITHUB_PRIVATE_KEY"},
 			},
 			Commands: tagCheckoutCommands(b.fips),
 		},
@@ -309,9 +314,9 @@ func tagPackagePipeline(packageType string, b buildType) pipeline {
 	}
 
 	environment := map[string]value{
-		"ARCH":             value{raw: b.arch},
-		"TMPDIR":           value{raw: "/go"},
-		"ENT_TARBALL_PATH": value{raw: "/go/artifacts"},
+		"ARCH":             {raw: b.arch},
+		"TMPDIR":           {raw: "/go"},
+		"ENT_TARBALL_PATH": {raw: "/go/artifacts"},
 	}
 
 	dependentPipeline := fmt.Sprintf("build-%s-%s", b.os, b.arch)
@@ -373,7 +378,7 @@ func tagPackagePipeline(packageType string, b buildType) pipeline {
 			Name:  "Check out code",
 			Image: "docker:git",
 			Environment: map[string]value{
-				"GITHUB_PRIVATE_KEY": value{fromSecret: "GITHUB_PRIVATE_KEY"},
+				"GITHUB_PRIVATE_KEY": {fromSecret: "GITHUB_PRIVATE_KEY"},
 			},
 			Commands: tagCheckoutCommands(b.fips),
 		},
@@ -382,10 +387,10 @@ func tagPackagePipeline(packageType string, b buildType) pipeline {
 			Name:  "Download artifacts from S3",
 			Image: "amazon/aws-cli",
 			Environment: map[string]value{
-				"AWS_REGION":            value{raw: "us-west-2"},
-				"AWS_S3_BUCKET":         value{fromSecret: "AWS_S3_BUCKET"},
-				"AWS_ACCESS_KEY_ID":     value{fromSecret: "AWS_ACCESS_KEY_ID"},
-				"AWS_SECRET_ACCESS_KEY": value{fromSecret: "AWS_SECRET_ACCESS_KEY"},
+				"AWS_REGION":            {raw: "us-west-2"},
+				"AWS_S3_BUCKET":         {fromSecret: "AWS_S3_BUCKET"},
+				"AWS_ACCESS_KEY_ID":     {fromSecret: "AWS_ACCESS_KEY_ID"},
+				"AWS_SECRET_ACCESS_KEY": {fromSecret: "AWS_SECRET_ACCESS_KEY"},
 			},
 			Commands: tagDownloadArtifactCommands(b),
 		},

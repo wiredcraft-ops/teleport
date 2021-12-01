@@ -30,6 +30,8 @@ GOGO_PROTO_TAG ?= v1.3.2
 BUILDBOX=quay.io/gravitational/teleport-buildbox:$(RUNTIME)
 BUILDBOX_FIPS=quay.io/gravitational/teleport-buildbox-fips:$(RUNTIME)
 BUILDBOX_CENTOS6=quay.io/gravitational/teleport-buildbox-centos6:$(RUNTIME)
+BUILDBOX_CENTOS7=quay.io/gravitational/teleport-buildbox-centos7:$(RUNTIME)
+BUILDBOX_CENTOS7_FIPS=quay.io/gravitational/teleport-buildbox-centos7-fips:$(RUNTIME)
 BUILDBOX_ARM=quay.io/gravitational/teleport-buildbox-arm:$(RUNTIME)
 BUILDBOX_ARM_FIPS=quay.io/gravitational/teleport-buildbox-arm-fips:$(RUNTIME)
 
@@ -146,6 +148,32 @@ buildbox-centos6:
 
 # CentOS 6 FIPS builds were removed in Teleport 7.0
 # https://github.com/gravitational/teleport/issues/7207
+
+#
+ # Builds a Docker buildbox for CentOS 7 builds
+ #
+ .PHONY:buildbox-centos7
+ buildbox-centos7:
+ 	@if [[ $${DRONE} == "true" ]] && ! docker inspect --type=image $(BUILDBOX_CENTOS7) 2>&1 >/dev/null; then docker pull $(BUILDBOX_CENTOS7) || true; fi;
+ 	docker build \
+ 		--build-arg UID=$(UID) \
+ 		--build-arg GID=$(GID) \
+ 		--build-arg RUNTIME=$(RUNTIME) \\
+ 		--cache-from $(BUILDBOX_CENTOS7) \
+ 		--tag $(BUILDBOX_CENTOS7) -f Dockerfile-centos7 .
+
+#
+ # Builds a Docker buildbox for CentOS 7 FIPS builds
+ #
+ .PHONY:buildbox-centos7-fips
+ buildbox-centos7-fips:
+ 	@if [[ $${DRONE} == "true" ]] && ! docker inspect --type=image $(BUILDBOX_CENTOS7_FIPS) 2>&1 >/dev/null; then docker pull $(BUILDBOX_CENTOS7_FIPS) || true; fi;
+ 	docker build \
+ 		--build-arg UID=$(UID) \
+ 		--build-arg GID=$(GID) \
+ 		--build-arg BORINGCRYPTO_RUNTIME=$(BORINGCRYPTO_RUNTIME) \
+ 		--cache-from $(BUILDBOX_CENTOS7_FIPS) \
+ 		--tag $(BUILDBOX_CENTOS7_FIPS) -f Dockerfile-centos7-fips .
 
 #
 # Builds a Docker buildbox for ARMv7/ARM64 builds
@@ -287,6 +315,14 @@ release-arm64: buildbox-arm
 release-amd64-centos6: buildbox-centos6
 	$(MAKE) release-centos6 ARCH=amd64
 
+.PHONY: release-amd64-centos7
+release-amd64-centos7: buildbox-centos7
+	$(MAKE) release-centos7 ARCH=amd64
+
+.PHONY: release-amd64-centos7-fips
+release-amd64-centos7-fips: buildbox-centos7-fips
+ 	$(MAKE) release-centos7-fips ARCH=amd64 FIPS=yes
+
 #
 # Create a Teleport FIPS package using the build container.
 # This is a special case because it only builds and packages the Enterprise FIPS binaries, no OSS.
@@ -300,10 +336,19 @@ release-fips: buildbox-fips
 
 #
 # Create a Teleport package for CentOS 6 using the build container.
+# DELETE IN 9.0 (zmb3)
 #
 .PHONY:release-centos6
 release-centos6: buildbox-centos6
 	docker run $(DOCKERFLAGS) -i $(NOROOT) $(BUILDBOX_CENTOS6) \
+		/usr/bin/make release -e ADDFLAGS="$(ADDFLAGS)" OS=$(OS) ARCH=$(ARCH) RUNTIME=$(RUNTIME) REPRODUCIBLE=no
+
+#
+# Create a Teleport package for CentOS 7 using the build container.
+#
+.PHONY:release-centos7
+release-centos7: buildbox-centos7
+	docker run $(DOCKERFLAGS) -i $(NOROOT) $(BUILDBOX_CENTOS7) \
 		/usr/bin/make release -e ADDFLAGS="$(ADDFLAGS)" OS=$(OS) ARCH=$(ARCH) RUNTIME=$(RUNTIME) REPRODUCIBLE=no
 
 #

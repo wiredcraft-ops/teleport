@@ -69,24 +69,15 @@ RUN (groupadd ci --gid=$GID -o && useradd ci --uid=$UID --gid=$GID --create-home
      mkdir -p -m0700 /var/lib/teleport && chown -R ci /var/lib/teleport)
 
 # Install Rust
-#
-# Rust installation based on official rust image Dockerfile here:
-#   https://github.com/rust-lang/docker-rust/blob/master/1.56.0/bullseye/Dockerfile
-#
-# The original Rust docker image uses a script to install `rustup`, and from
-# there rustc and associated tools.
-#
-# Rather than execute an arbitrary `rustup` installation script, we are cherry-
-# picking the appropriate files off the official docker image and then installing
-# the extra tooling/targets we need.
-
- ENV RUSTUP_HOME=/usr/local/rustup \
+ARG RUST_VERSION
+ENV RUSTUP_HOME=/usr/local/rustup \
      CARGO_HOME=/usr/local/cargo \
      PATH=/usr/local/cargo/bin:$PATH \
-     RUST_VERSION=1.56.1
+     RUST_VERSION=$RUST_VERSION
 
-COPY --from=rust:1.56.1 /usr/local/rustup /usr/local/rustup
-COPY --from=rust:1.56.1 /usr/local/cargo /usr/local/cargo
+RUN mkdir -p $RUSTUP_HOME && chmod a+w $RUSTUP_HOME && \
+    mkdir -p $CARGO_HOME/registry && chmod -R a+w $CARGO_HOME
+
 RUN set -eux \
     rustup --version; \
     cargo --version; \
@@ -97,6 +88,17 @@ RUN set -eux \
     rustup target add aarch64-unknown-linux-gnu; \
     rustup target list | grep installed; \
     rustc --version;
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain $RUST_VERSION && \
+    rustup --version && \
+    cargo --version && \
+    rustc --version && \
+    rustup component add --toolchain $RUST_VERSION-x86_64-unknown-linux-gnu rustfmt clippy && \
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME && \
+    rustup target add i686-unknown-linux-gnu && \
+    rustup target add arm-unknown-linux-gnueabihf && \
+    rustup target add aarch64-unknown-linux-gnu && \
+    cargo install cbindgen
 
 # Install etcd.
 RUN (curl -L https://github.com/coreos/etcd/releases/download/v3.3.9/etcd-v3.3.9-linux-amd64.tar.gz | tar -xz && \

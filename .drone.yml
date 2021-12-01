@@ -1363,7 +1363,215 @@ steps:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:221
+# Generated at dronegen/tag.go:226
+################################################
+
+kind: pipeline
+type: kubernetes
+name: build-linux-amd64-centos7
+environment:
+  RUNTIME: go1.17.2
+trigger:
+  event:
+    include:
+    - tag
+  ref:
+    include:
+    - refs/tags/v*
+  repo:
+    include:
+    - gravitational/*
+workspace:
+  path: /go
+clone:
+  disable: true
+steps:
+- name: Check out code
+  image: docker:git
+  commands:
+  - mkdir -p /go/src/github.com/gravitational/teleport
+  - cd /go/src/github.com/gravitational/teleport
+  - git clone https://github.com/gravitational/${DRONE_REPO_NAME}.git .
+  - git checkout ${DRONE_TAG:-$DRONE_COMMIT}
+  - mkdir -m 0700 /root/.ssh && echo -n "$GITHUB_PRIVATE_KEY" > /root/.ssh/id_rsa
+    && chmod 600 /root/.ssh/id_rsa
+  - ssh-keyscan -H github.com > /root/.ssh/known_hosts 2>/dev/null && chmod 600 /root/.ssh/known_hosts
+  - git submodule update --init e
+  - git submodule update --init --recursive webassets || true
+  - rm -f /root/.ssh/id_rsa
+  - mkdir -p /go/cache /go/artifacts
+  - if [[ "${DRONE_TAG}" != "" ]]; then echo "${DRONE_TAG##v}" > /go/.version.txt;
+    else egrep ^VERSION Makefile | cut -d= -f2 > /go/.version.txt; fi; cat /go/.version.txt
+  environment:
+    GITHUB_PRIVATE_KEY:
+      from_secret: GITHUB_PRIVATE_KEY
+- name: Wait for docker
+  image: docker
+  commands:
+  - timeout 30s /bin/sh -c 'while [ ! -S /var/run/docker.sock ]; do sleep 1; done'
+  volumes:
+  - name: dockersock
+    path: /var/run
+- name: Build artifacts
+  image: docker
+  commands:
+  - apk add --no-cache make
+  - chown -R $UID:$GID /go
+  - cd /go/src/github.com/gravitational/teleport
+  - make -C build.assets release-amd64-centos7
+  environment:
+    ARCH: amd64
+    GID: "1000"
+    GOCACHE: /go/cache
+    GOPATH: /go
+    OS: linux
+    UID: "1000"
+  volumes:
+  - name: dockersock
+    path: /var/run
+- name: Copy artifacts
+  image: docker
+  commands:
+  - cd /go/src/github.com/gravitational/teleport
+  - find . -maxdepth 1 -iname "teleport*.tar.gz" -print -exec cp {} /go/artifacts
+    \;
+  - find e/ -maxdepth 1 -iname "teleport*.tar.gz" -print -exec cp {} /go/artifacts
+    \;
+  - cd /go/artifacts && for FILE in teleport*.tar.gz; do sha256sum $FILE > $FILE.sha256;
+    done && ls -l
+- name: Upload to S3
+  image: plugins/s3
+  settings:
+    access_key:
+      from_secret: AWS_ACCESS_KEY_ID
+    bucket:
+      from_secret: AWS_S3_BUCKET
+    region: us-west-2
+    secret_key:
+      from_secret: AWS_SECRET_ACCESS_KEY
+    source: /go/artifacts/*
+    strip_prefix: /go/artifacts/
+    target: teleport/tag/${DRONE_TAG##v}
+services:
+- name: Start Docker
+  image: docker:dind
+  privileged: true
+  volumes:
+  - name: dockersock
+    path: /var/run
+volumes:
+- name: dockersock
+  temp: {}
+
+---
+################################################
+# Generated using dronegen, do not edit by hand!
+# Use 'make dronegen' to update.
+# Generated at dronegen/tag.go:226
+################################################
+
+kind: pipeline
+type: kubernetes
+name: build-linux-amd64-centos7-fips
+environment:
+  RUNTIME: go1.17.2
+trigger:
+  event:
+    include:
+    - tag
+  ref:
+    include:
+    - refs/tags/v*
+  repo:
+    include:
+    - gravitational/*
+workspace:
+  path: /go
+clone:
+  disable: true
+steps:
+- name: Check out code
+  image: docker:git
+  commands:
+  - mkdir -p /go/src/github.com/gravitational/teleport
+  - cd /go/src/github.com/gravitational/teleport
+  - git clone https://github.com/gravitational/${DRONE_REPO_NAME}.git .
+  - git checkout ${DRONE_TAG:-$DRONE_COMMIT}
+  - mkdir -m 0700 /root/.ssh && echo -n "$GITHUB_PRIVATE_KEY" > /root/.ssh/id_rsa
+    && chmod 600 /root/.ssh/id_rsa
+  - ssh-keyscan -H github.com > /root/.ssh/known_hosts 2>/dev/null && chmod 600 /root/.ssh/known_hosts
+  - git submodule update --init e
+  - git submodule update --init --recursive webassets || true
+  - rm -f /root/.ssh/id_rsa
+  - mkdir -p /go/cache /go/artifacts
+  - if [[ "${DRONE_TAG}" != "" ]]; then echo "${DRONE_TAG##v}" > /go/.version.txt;
+    else egrep ^VERSION Makefile | cut -d= -f2 > /go/.version.txt; fi; cat /go/.version.txt
+  environment:
+    GITHUB_PRIVATE_KEY:
+      from_secret: GITHUB_PRIVATE_KEY
+- name: Wait for docker
+  image: docker
+  commands:
+  - timeout 30s /bin/sh -c 'while [ ! -S /var/run/docker.sock ]; do sleep 1; done'
+  volumes:
+  - name: dockersock
+    path: /var/run
+- name: Build artifacts
+  image: docker
+  commands:
+  - apk add --no-cache make
+  - chown -R $UID:$GID /go
+  - cd /go/src/github.com/gravitational/teleport
+  - export VERSION=$(cat /go/.version.txt)
+  - make -C build.assets release-amd64-centos7-fips
+  environment:
+    ARCH: amd64
+    FIPS: "yes"
+    GID: "1000"
+    GOCACHE: /go/cache
+    GOPATH: /go
+    OS: linux
+    UID: "1000"
+  volumes:
+  - name: dockersock
+    path: /var/run
+- name: Copy artifacts
+  image: docker
+  commands:
+  - cd /go/src/github.com/gravitational/teleport
+  - find e/ -maxdepth 1 -iname "teleport*.tar.gz" -print -exec cp {} /go/artifacts
+    \;
+  - cd /go/artifacts && for FILE in teleport*.tar.gz; do sha256sum $FILE > $FILE.sha256;
+    done && ls -l
+- name: Upload to S3
+  image: plugins/s3
+  settings:
+    access_key:
+      from_secret: AWS_ACCESS_KEY_ID
+    bucket:
+      from_secret: AWS_S3_BUCKET
+    region: us-west-2
+    secret_key:
+      from_secret: AWS_SECRET_ACCESS_KEY
+    source: /go/artifacts/*
+    strip_prefix: /go/artifacts/
+    target: teleport/tag/${DRONE_TAG##v}
+services:
+- name: Start Docker
+  image: docker:dind
+  privileged: true
+  volumes:
+  - name: dockersock
+    path: /var/run
+volumes:
+- name: dockersock
+  temp: {}
+
+---
+################################################
+# Generated using dronegen, do not edit by hand!
+# Use 'make dronegen' to update.
+# Generated at dronegen/tag.go:226
 ################################################
 
 kind: pipeline
@@ -1467,7 +1675,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:221
+# Generated at dronegen/tag.go:226
 ################################################
 
 kind: pipeline
@@ -1571,7 +1779,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:221
+# Generated at dronegen/tag.go:226
 ################################################
 
 kind: pipeline
@@ -1678,7 +1886,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -1810,7 +2018,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -1939,7 +2147,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -2057,7 +2265,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -2172,7 +2380,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:221
+# Generated at dronegen/tag.go:226
 ################################################
 
 kind: pipeline
@@ -2276,7 +2484,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -2408,7 +2616,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -2950,7 +3158,7 @@ steps:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:221
+# Generated at dronegen/tag.go:226
 ################################################
 
 kind: pipeline
@@ -3054,7 +3262,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:221
+# Generated at dronegen/tag.go:226
 ################################################
 
 kind: pipeline
@@ -3158,7 +3366,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -3276,7 +3484,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -3394,7 +3602,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -3526,7 +3734,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:363
+# Generated at dronegen/tag.go:368
 ################################################
 
 kind: pipeline
@@ -3658,7 +3866,7 @@ volumes:
 ################################################
 # Generated using dronegen, do not edit by hand!
 # Use 'make dronegen' to update.
-# Generated at dronegen/tag.go:221
+# Generated at dronegen/tag.go:226
 ################################################
 
 kind: pipeline
@@ -4543,6 +4751,6 @@ volumes:
       name: drone-s3-debrepo-pvc
 ---
 kind: signature
-hmac: 28314d2ef716fd998f2d888cf53b403e3aa7139833d30481e7c28678f10975c3
+hmac: 7927ca139d28ed02621dab7102763466d377ab019465877234099d51c9305fb4
 
 ...
