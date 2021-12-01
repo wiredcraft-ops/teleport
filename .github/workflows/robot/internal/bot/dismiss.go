@@ -56,7 +56,7 @@ func (b *Bot) Dimiss(ctx context.Context) error {
 // dismiss dismisses all but the most recent "Check" workflow run.
 //
 // This is needed because GitHub appends each "Check" workflow run to the status
-// of a PR instead of replacing the status of an exisiting run.
+// of a PR instead of replacing the status of an existing run.
 func (b *Bot) dismiss(ctx context.Context, organization string, repository string, branch string) error {
 	check, err := b.findWorkflow(ctx,
 		organization,

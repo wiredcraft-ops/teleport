@@ -172,12 +172,11 @@ func (c *client) ListPullRequests(ctx context.Context, organization string, repo
 				Repository: repository,
 				UnsafeHead: pr.GetHead().GetRef(),
 			})
-
-			if resp.NextPage == 0 {
-				break
-			}
-			opt.Page = resp.NextPage
 		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
 	}
 
 	return pulls, nil

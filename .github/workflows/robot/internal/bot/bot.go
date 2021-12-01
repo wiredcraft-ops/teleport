@@ -42,13 +42,13 @@ type Config struct {
 // CheckAndSetDefaults checks and sets defaults.
 func (c *Config) CheckAndSetDefaults() error {
 	if c.GitHub == nil {
-		return trace.BadParameter("github client required")
+		return trace.BadParameter("missing parameter GitHub")
 	}
 	if c.Environment == nil {
-		return trace.BadParameter("environment event required")
+		return trace.BadParameter("missing parameter Environment")
 	}
 	if c.Reviewer == nil {
-		return trace.BadParameter("reviewers missing")
+		return trace.BadParameter("missing parameter Reviewer")
 	}
 
 	return nil
